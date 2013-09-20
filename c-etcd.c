@@ -16,7 +16,7 @@
 #define DEFAULT_HOSTNAME "127.0.0.1"
 #define DEFAULT_PORT 4001
 #define HTTP_SUCCESS 200
-#define ETCD_URL_FORMAT "http://%s:%hd/v1/keys/%s"
+#define ETCD_URL_FORMAT "http://%s:%hd/v1/%s%s"
 
 static const char *hostname = NULL;
 static short port = 0;
@@ -39,12 +39,12 @@ struct etcd_data {
 };
 
 /* API */
-etcd_response etcd_set(const char *key, const char *value);
+etcd_response etcd_set(const char *key, const char *value, unsigned ttl);
 const struct etcd_data *etcd_get(const char *key);
 etcd_response etcd_delete(const char *key);
 
 /* Internal */
-static char *etcd_url(const char *key);
+static char *etcd_url(const char *key, const char *prefix);
 static const char *etcd_host();
 static short etcd_port();
 
@@ -60,7 +60,7 @@ int main(int argc, char *argv[]) {
     char *h;
     etcd_response response;
     const struct etcd_data *val;
-    const char *key = "key1", *value = "value1";
+    const char *key = "/key1", *value = "value1";
 
     if (argc <= 1) {
         hostname = DEFAULT_HOSTNAME;
@@ -74,7 +74,7 @@ int main(int argc, char *argv[]) {
     }
 
 
-    response = etcd_set(key, value);
+    response = etcd_set(key, value, 0);
     assert(response == ETCD_SUCCESS);
 
     val = etcd_get(key);
@@ -92,8 +92,8 @@ int main(int argc, char *argv[]) {
 }
 
 /* Function definitions */
-etcd_response etcd_set(const char *key, const char *value) {
-    char *url, *data;
+etcd_response etcd_set(const char *key, const char *value, unsigned ttl) {
+    char *url, *data, *tmpdata;
     const struct etcd_data *retdata;
     int ret;
     etcd_response response;
@@ -108,9 +108,17 @@ etcd_response etcd_set(const char *key, const char *value) {
         return ETCD_FAILURE;
     }
 
-    url = etcd_url(key);
+    url = etcd_url(key, NULL);
     ret = asprintf(&data, "value=%s", value);
     assert(ret >= 0);
+
+    if (ttl > 0) {
+        ret = asprintf(&tmpdata, "%s&ttl=%u", data, ttl);
+        assert(ret >= 0);
+
+        free(data);
+        data = tmpdata;
+    }
 
     retdata = http_request(url, ETCD_SET, data);
     assert(retdata != NULL);
@@ -122,6 +130,7 @@ etcd_response etcd_set(const char *key, const char *value) {
     }
 
     free(url);
+    free(data);
     free((struct etcd_data *)retdata);
     return response;
 }
@@ -135,7 +144,7 @@ const struct etcd_data *etcd_get(const char *key) {
         return NULL;
     }
 
-    url = etcd_url(key);
+    url = etcd_url(key, NULL);
     retdata = http_request(url, ETCD_GET, NULL);
     if (retdata == NULL)
         return NULL;
@@ -155,7 +164,7 @@ etcd_response etcd_delete(const char *key) {
         return ETCD_FAILURE;
     }
 
-    url = etcd_url(key);
+    url = etcd_url(key, NULL);
     retdata = http_request(url, ETCD_DEL, NULL);
     assert(retdata != NULL);
 
@@ -170,13 +179,21 @@ etcd_response etcd_delete(const char *key) {
     return response;
 }
 
-static char *etcd_url(const char *key) {
+static char *etcd_url(const char *key, const char *prefix) {
     char *url;
-    int ret;
+    int ret, prefix_allocated = 0;
 
-    ret = asprintf(&url, ETCD_URL_FORMAT, etcd_host(), etcd_port(), key);
+    if (prefix == NULL) {
+        prefix = strdup("keys");
+        prefix_allocated = 1;
+    }
+
+    ret = asprintf(&url, ETCD_URL_FORMAT, etcd_host(), etcd_port(), prefix, key);
     assert(ret >= 0);
 
+    if (prefix_allocated) {
+        free((char *)prefix);
+    }
     return url;
 }
 
