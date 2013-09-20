@@ -1,6 +1,7 @@
 /**
  * @author Vaibhav Bhembre
  * @version 2013/09/19
+ * gcc -g -DDEBUG -Wall -Werror -Wshadow -Wwrite-strings -pedantic c-etcd.c -o etcd -lcurl -ljansson -std=c99
  */
 
 #include <stdio.h>
@@ -39,7 +40,8 @@ struct etcd_data {
 
 /* API */
 etcd_response etcd_set(const char *key, const char *value);
-const char *etcd_get(const char *key);
+const struct etcd_data *etcd_get(const char *key);
+etcd_response etcd_delete(const char *key);
 
 /* Internal */
 static char *etcd_url(const char *key);
@@ -57,7 +59,7 @@ static void debug(const char *msg);
 int main(int argc, char *argv[]) {
     char *h;
     etcd_response response;
-    const char *val;
+    const struct etcd_data *val;
     const char *key = "key1", *value = "value1";
 
     if (argc <= 1) {
@@ -76,7 +78,15 @@ int main(int argc, char *argv[]) {
     assert(response == ETCD_SUCCESS);
 
     val = etcd_get(key);
-    assert(strcmp(val, value) == 0);
+    assert(val->response == ETCD_SUCCESS);
+    assert(strcmp(val->value, value) == 0);
+    free((struct etcd_data *)val);
+
+    response = etcd_delete(key);
+    assert(response == ETCD_SUCCESS);
+
+    val = etcd_get(key);
+    assert(val == NULL);
 
     return 0;
 }
@@ -116,10 +126,9 @@ etcd_response etcd_set(const char *key, const char *value) {
     return response;
 }
 
-const char *etcd_get(const char *key) {
+const struct etcd_data *etcd_get(const char *key) {
     char *url;
     const struct etcd_data *retdata;
-    const char *value;
 
     if (key == NULL || !strlen(key)) {
         debug("Key cannot be an empty string.");
@@ -128,31 +137,37 @@ const char *etcd_get(const char *key) {
 
     url = etcd_url(key);
     retdata = http_request(url, ETCD_GET, NULL);
-    assert(retdata != NULL);
+    if (retdata == NULL)
+        return NULL;
 
     free(url);
 
-    if (retdata->response == ETCD_FAILURE) {
-        debug(retdata->errmsg);
-        goto retn;
-    }
-
-    if (retdata->response == ETCD_SUCCESS) {
-        value = strdup(retdata->value);
-        free((struct retdata *)retdata);
-        return value;
-    }
-
-retn:
-    free((struct retdata *)retdata);
-    return NULL;
-
+    return retdata;
 }
 
-__attribute__ ((unused))
-static etcd_response etcd_delete(const char *key) {
-    /* To be defined */
-    return ETCD_FAILURE;
+etcd_response etcd_delete(const char *key) {
+    char *url;
+    const struct etcd_data *retdata;
+    etcd_response response;
+
+    if (key == NULL || !strlen(key)) {
+        debug("Key cannot be an empty string.");
+        return ETCD_FAILURE;
+    }
+
+    url = etcd_url(key);
+    retdata = http_request(url, ETCD_DEL, NULL);
+    assert(retdata != NULL);
+
+    response = retdata->response;
+
+    if (response == ETCD_FAILURE) {
+        debug(retdata->errmsg);
+    }
+
+    free(url);
+    free((struct etcd_data *)retdata);
+    return response;
 }
 
 static char *etcd_url(const char *key) {
@@ -217,7 +232,7 @@ static const struct etcd_data *http_request(const char *url, etcd_method method,
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data);
 
     } else if (method == ETCD_DEL) {
-        /* Add logic for delete */
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
     }
 
     curl_code = curl_easy_perform(curl);
@@ -239,12 +254,11 @@ static const struct etcd_data *http_request(const char *url, etcd_method method,
 error_cleanup_curl:
     curl_easy_cleanup(curl);
 error:
-    exit_debug(errmsg);
+    debug(errmsg);
     return NULL;
 }
 
-static size_t
-http_write_callback(void *ptr, size_t size, size_t nmemb, void *userdata) {
+static size_t http_write_callback(void *ptr, size_t size, size_t nmemb, void *userdata) {
     json_t *response, *value;
     json_error_t error;
     const char *etcd_value;
@@ -262,22 +276,42 @@ http_write_callback(void *ptr, size_t size, size_t nmemb, void *userdata) {
 
     value = json_object_get(response, "value");
     if (!json_is_string(value)) {
-        value = json_object_get(response, "errorCode");
-        if (!json_is_integer(value)) {
-            strcpy(data->errmsg, "Invalid error message.");
-            goto error_value;
-        }
-        val = json_integer_value(value);
-        json_decref(value);
-
-        value = json_object_get(response, "message");
+        value = json_object_get(response, "action");
         if (!json_is_string(value)) {
-            strcpy(data->errmsg, "Invalid error message.");
+            strcpy(data->errmsg, "Invalid action attribute.");
             goto error_value;
         }
-        errmsg = json_string_value(value);
-        sprintf(data->errmsg, "%d:%s", val, errmsg);
-        goto error_value;
+        etcd_value = json_string_value(value);
+        if (strcmp(etcd_value, "DELETE") == 0) {
+            value = json_object_get(response, "key");
+            etcd_value = json_string_value(value);
+            strcpy(data->value, ++etcd_value);
+            data->response = ETCD_SUCCESS;
+
+            json_decref(value);
+            json_decref(response);
+            return size * nmemb;
+
+        } else { /* action: "POST" */
+            value = json_object_get(response, "errorCode");
+            if (!json_is_integer(value)) {
+                strcpy(data->errmsg, "Invalid error message.");
+                goto error_value;
+            }
+            val = json_integer_value(value);
+            json_decref(value);
+
+            value = json_object_get(response, "message");
+            if (!json_is_string(value)) {
+                strcpy(data->errmsg, "Invalid error message.");
+                goto error_value;
+            }
+
+            errmsg = json_string_value(value);
+            sprintf(data->errmsg, "%d:%s", val, errmsg);
+            goto error_value;
+        }
+
     }
 
     etcd_value = json_string_value(value);
@@ -321,5 +355,7 @@ static void exit_debug_status(const char *msg, int status) {
 }
 
 static void debug(const char *msg) {
+#ifdef DEBUG
     fprintf(stdout, "%s\n", msg);
+#endif
 }
