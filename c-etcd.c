@@ -16,6 +16,7 @@
 #define DEFAULT_HOSTNAME "127.0.0.1"
 #define DEFAULT_PORT 4001
 #define HTTP_SUCCESS 200
+#define HTTP_BAD_REQ 400
 #define ETCD_URL_FORMAT "http://%s:%hd/v1/%s%s"
 
 static const char *hostname = NULL;
@@ -36,12 +37,14 @@ struct etcd_data {
     etcd_response response;
     char *value;
     char *errmsg;
+    int index;
 };
 
 /* API */
 etcd_response etcd_set(const char *key, const char *value, unsigned ttl);
 const struct etcd_data *etcd_get(const char *key);
 etcd_response etcd_delete(const char *key);
+etcd_response etcd_test_and_set(const char *key, const char *value, const char *oldValue, unsigned ttl);
 
 /* Internal */
 static char *etcd_url(const char *key, const char *prefix);
@@ -52,9 +55,12 @@ static const struct etcd_data *http_request(const char *url, etcd_method method,
 static size_t http_write_callback(void *ptr, size_t size, size_t nmemb, void *userdata);
 
 static void init_etcd_data(struct etcd_data **data);
+
+static int is_valid_key(const char *);
+static int is_valid_value(const char *);
 static void exit_debug(const char *msg);
 static void exit_debug_status(const char *msg, int status);
-static void debug(const char *msg);
+static void debug(const char *msg, ...);
 
 int main(int argc, char *argv[]) {
     char *h;
@@ -86,7 +92,16 @@ int main(int argc, char *argv[]) {
     assert(response == ETCD_SUCCESS);
 
     val = etcd_get(key);
-    assert(val == NULL);
+    assert(val->response == ETCD_FAILURE);
+
+    response = etcd_set(key, value, 5);
+    assert(response == ETCD_SUCCESS);
+
+    response = etcd_test_and_set(key, "value2", value, 0);
+    assert(response == ETCD_SUCCESS);
+
+    response = etcd_test_and_set(key, "value2", value, 0);
+    assert(response == ETCD_FAILURE);
 
     return 0;
 }
@@ -98,13 +113,7 @@ etcd_response etcd_set(const char *key, const char *value, unsigned ttl) {
     int ret;
     etcd_response response;
 
-    if (!strlen(key)) {
-        debug("Key provided cannot be empty.");
-        return ETCD_FAILURE;
-    }
-
-    if (!strlen(value)) {
-        debug("Value must be a non-empty string.");
+    if (!is_valid_key(key) || !is_valid_value(value)) {
         return ETCD_FAILURE;
     }
 
@@ -139,18 +148,14 @@ const struct etcd_data *etcd_get(const char *key) {
     char *url;
     const struct etcd_data *retdata;
 
-    if (key == NULL || !strlen(key)) {
-        debug("Key cannot be an empty string.");
+    if (!is_valid_key(key)) {
         return NULL;
     }
 
     url = etcd_url(key, NULL);
     retdata = http_request(url, ETCD_GET, NULL);
-    if (retdata == NULL)
-        return NULL;
 
     free(url);
-
     return retdata;
 }
 
@@ -159,8 +164,7 @@ etcd_response etcd_delete(const char *key) {
     const struct etcd_data *retdata;
     etcd_response response;
 
-    if (key == NULL || !strlen(key)) {
-        debug("Key cannot be an empty string.");
+    if (!is_valid_key(key)) {
         return ETCD_FAILURE;
     }
 
@@ -175,6 +179,51 @@ etcd_response etcd_delete(const char *key) {
     }
 
     free(url);
+    free((struct etcd_data *)retdata);
+    return response;
+}
+
+etcd_response etcd_test_and_set(const char *key, const char *value, const char *oldValue, unsigned ttl) {
+    char *url, *data, *tmpdata;
+    const struct etcd_data *retdata;
+    etcd_response response;
+    int ret;
+
+    if (!is_valid_key(key) || !is_valid_value(value)) {
+        return ETCD_FAILURE;
+    }
+
+    if (!is_valid_value(oldValue)) {
+        /* If the old value is NULL, then this should act like etcd_set() */
+        if (oldValue == NULL) {
+            return etcd_set(key, value, ttl);
+        }
+        return ETCD_FAILURE;
+    }
+
+    url = etcd_url(key, NULL);
+    ret = asprintf(&data, "value=%s&prevValue=%s", value, oldValue);
+    assert(ret >= 0);
+
+    if (ttl > 0) {
+        ret = asprintf(&tmpdata, "%s&ttl=%u", data, ttl);
+        assert(ret >= 0);
+
+        free(data);
+        data = tmpdata;
+    }
+
+    retdata = http_request(url, ETCD_SET, data);
+    assert(retdata != NULL);
+
+    response = retdata->response;
+
+    if (response == ETCD_FAILURE) {
+        debug(retdata->errmsg);
+    }
+
+    free(url);
+    free(data);
     free((struct etcd_data *)retdata);
     return response;
 }
@@ -209,6 +258,22 @@ static short etcd_port() {
         exit_debug("Incorrect port provided as 0.");
     }
     return port;
+}
+
+static int is_valid_key(const char *key) {
+    if (key == NULL || !strlen(key)) {
+        debug("Invalid key provided.");
+        return 0;
+    }
+    return 1;
+}
+
+static int is_valid_value(const char *value) {
+    if (value == NULL || !strlen(value)) {
+        debug("Invalid value provided.");
+        return 0;
+    }
+    return 1;
 }
 
 static const struct etcd_data *http_request(const char *url, etcd_method method, const char *post_data) {
@@ -259,7 +324,7 @@ static const struct etcd_data *http_request(const char *url, etcd_method method,
     }
 
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpcode);
-    if (httpcode != HTTP_SUCCESS) {
+    if (httpcode != HTTP_SUCCESS && httpcode != HTTP_BAD_REQ) {
         errmsg = strdup("Server responded with status code:    ");
         sprintf(&errmsg[strlen(errmsg) - 3], "%ld", httpcode);
         goto error_cleanup_curl;
@@ -276,7 +341,7 @@ error:
 }
 
 static size_t http_write_callback(void *ptr, size_t size, size_t nmemb, void *userdata) {
-    json_t *response, *value;
+    json_t *response, *value, *in;
     json_error_t error;
     const char *etcd_value;
     const char *errmsg;
@@ -291,14 +356,19 @@ static size_t http_write_callback(void *ptr, size_t size, size_t nmemb, void *us
         goto error;
     }
 
+    in = json_object_get(response, "index");
+    if (json_is_integer(in)) {
+        data->index = json_integer_value(in);
+    }
+    json_decref(in);
+
     value = json_object_get(response, "value");
     if (!json_is_string(value)) {
         value = json_object_get(response, "action");
-        if (!json_is_string(value)) {
-            strcpy(data->errmsg, "Invalid action attribute.");
-            goto error_value;
+        etcd_value = "";
+        if (json_is_string(value)) {
+            etcd_value = json_string_value(value);
         }
-        etcd_value = json_string_value(value);
         if (strcmp(etcd_value, "DELETE") == 0) {
             value = json_object_get(response, "key");
             etcd_value = json_string_value(value);
@@ -306,10 +376,10 @@ static size_t http_write_callback(void *ptr, size_t size, size_t nmemb, void *us
             data->response = ETCD_SUCCESS;
 
             json_decref(value);
-            json_decref(response);
+            /* json_decref(response); */
             return size * nmemb;
 
-        } else { /* action: "POST" */
+        } else {
             value = json_object_get(response, "errorCode");
             if (!json_is_integer(value)) {
                 strcpy(data->errmsg, "Invalid error message.");
@@ -328,15 +398,13 @@ static size_t http_write_callback(void *ptr, size_t size, size_t nmemb, void *us
             sprintf(data->errmsg, "%d:%s", val, errmsg);
             goto error_value;
         }
-
     }
-
     etcd_value = json_string_value(value);
     memcpy(data->value, etcd_value, strlen(etcd_value) + 1);
     data->response = ETCD_SUCCESS;
 
     json_decref(value);
-    json_decref(response);
+    /* json_decref(response); */
     return size * nmemb;
 
 error_value:
@@ -355,6 +423,7 @@ static void init_etcd_data(struct etcd_data **data) {
     if (!d) return;
     memset(d, 0x00, sizeof(*d) + BUFSIZE);
 
+    d->index = -1;
     d->value =  &((char *)d)[sizeof(*d) + 1]; /* Trick to ensure only 1 malloc is required */
     d->errmsg = d->value + (BUFSIZE / 2);
     *data = d;
@@ -371,8 +440,14 @@ static void exit_debug_status(const char *msg, int status) {
     exit(status);
 }
 
-static void debug(const char *msg) {
+static void debug(const char *msg, ...) {
 #ifdef DEBUG
-    fprintf(stdout, "%s\n", msg);
+    va_list args;
+    va_start(args, msg);
+
+    vfprintf(stdout, msg, args);
+    fprintf(stdout, "\n");
+
+    va_end(args);
 #endif
 }
