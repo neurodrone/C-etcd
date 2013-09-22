@@ -337,6 +337,7 @@ error_cleanup_curl:
     curl_easy_cleanup(curl);
 error:
     debug(errmsg);
+    free(errmsg);
     return NULL;
 }
 
@@ -419,9 +420,8 @@ error:
 static void init_etcd_data(struct etcd_data **data) {
     struct etcd_data *d;
 
-    d = malloc(sizeof(*d) + BUFSIZE);
+    d = calloc(1, sizeof(*d) + BUFSIZE);
     if (!d) return;
-    memset(d, 0x00, sizeof(*d) + BUFSIZE);
 
     d->index = -1;
     d->value =  &((char *)d)[sizeof(*d) + 1]; /* Trick to ensure only 1 malloc is required */
