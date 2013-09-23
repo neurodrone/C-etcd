@@ -93,6 +93,7 @@ int main(int argc, char *argv[]) {
 
     val = etcd_get(key);
     assert(val->response == ETCD_FAILURE);
+    free((struct etcd_data *)val);
 
     response = etcd_set(key, value, 5);
     assert(response == ETCD_SUCCESS);
@@ -319,6 +320,11 @@ static const struct etcd_data *http_request(const char *url, etcd_method method,
 
     curl_code = curl_easy_perform(curl);
     if (curl_code != 0) {
+        if (curl_code == CURLE_COULDNT_CONNECT) {
+            debug("Failed to recieve a response for request: %s. Aborting.", url);
+            exit(curl_code);
+        }
+
         errmsg = strdup("'curl_easy_perform' failed.");
         goto error_cleanup_curl;
     }
