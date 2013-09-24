@@ -368,7 +368,6 @@ static size_t http_write_callback(void *ptr, size_t size, size_t nmemb, void *us
     if (json_is_integer(in)) {
         data->index = json_integer_value(in);
     }
-    json_decref(in);
 
     value = json_object_get(response, "value");
     if (!json_is_string(value)) {
@@ -383,40 +382,35 @@ static size_t http_write_callback(void *ptr, size_t size, size_t nmemb, void *us
             strcpy(data->value, ++etcd_value);
             data->response = ETCD_SUCCESS;
 
-            json_decref(value);
-            /* json_decref(response); */
+            json_decref(response);
             return size * nmemb;
 
         } else {
             value = json_object_get(response, "errorCode");
             if (!json_is_integer(value)) {
                 strcpy(data->errmsg, "Invalid error message.");
-                goto error_value;
+                goto error;
             }
             val = json_integer_value(value);
-            json_decref(value);
 
             value = json_object_get(response, "message");
             if (!json_is_string(value)) {
                 strcpy(data->errmsg, "Invalid error message.");
-                goto error_value;
+                goto error;
             }
 
             errmsg = json_string_value(value);
             sprintf(data->errmsg, "%d:%s", val, errmsg);
-            goto error_value;
+            goto error;
         }
     }
     etcd_value = json_string_value(value);
     memcpy(data->value, etcd_value, strlen(etcd_value) + 1);
     data->response = ETCD_SUCCESS;
 
-    json_decref(value);
-    /* json_decref(response); */
+    json_decref(response);
     return size * nmemb;
 
-error_value:
-    json_decref(value);
 error:
     json_decref(response);
     data->value = NULL;
