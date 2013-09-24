@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <jansson.h>
 #include <curl/curl.h>
 #include <assert.h>
@@ -56,8 +57,8 @@ static size_t http_write_callback(void *ptr, size_t size, size_t nmemb, void *us
 
 static void init_etcd_data(struct etcd_data **data);
 
-static int is_valid_key(const char *);
-static int is_valid_value(const char *);
+static bool is_valid_key(const char *);
+static bool is_valid_value(const char *);
 static void exit_debug(const char *msg);
 static void exit_debug_status(const char *msg, int status);
 static void debug(const char *msg, ...);
@@ -261,20 +262,20 @@ static short etcd_port() {
     return port;
 }
 
-static int is_valid_key(const char *key) {
+static bool is_valid_key(const char *key) {
     if (key == NULL || !strlen(key)) {
         debug("Invalid key provided.");
-        return 0;
+        return false;
     }
-    return 1;
+    return true;
 }
 
-static int is_valid_value(const char *value) {
+static bool is_valid_value(const char *value) {
     if (value == NULL || !strlen(value)) {
         debug("Invalid value provided.");
-        return 0;
+        return false;
     }
-    return 1;
+    return true;
 }
 
 static const struct etcd_data *http_request(const char *url, etcd_method method, const char *post_data) {
