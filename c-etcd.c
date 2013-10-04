@@ -70,17 +70,6 @@ int main(int argc, char *argv[]) {
 /******************************************************************
  *** API Function definitions
  ******************************************************************/
-
-/*
- * Set a new value for a key.
- *
- * @param key:   A non-empty string that should serve as a key.
- * @param value: A non-empty string that should act as a value for this key.
- * @param ttl:   Set an expiry for the key in seconds. The key is deleted 
- *               after the given duration.
- *               Set it to 0 for unlimited expiry time.
- * @return:      ETCD_SUCCESS if no errors occur, ETCD_FAILURE otherwise.
- */
                 
 etcd_response etcd_set(const char *key, const char *value, unsigned ttl) {
     char *url, *data, *tmpdata;
@@ -119,16 +108,6 @@ etcd_response etcd_set(const char *key, const char *value, unsigned ttl) {
     return response;
 }
 
-/*
- * Get the value for the given key.
- *
- * @param key:   A non-empty string that should serve as a key.
- * @return:      A pointer to `etcd_data` struct that contains the value
- *               and the response result.
- *               If `.response` is failure, then `errmsg` will contain the
- *               error string.
- */
-
 const struct etcd_data *etcd_get(const char *key) {
     char *url;
     const struct etcd_data *retdata;
@@ -143,14 +122,6 @@ const struct etcd_data *etcd_get(const char *key) {
     free(url);
     return retdata;
 }
-
-/*
- * Delete a given key from the distributed store.
- *
- * @param key:   A non-empty string that should serve as a key.
- * @return:      ETCD_SUCCESS if no errors occur, or responds
- *               with ETCD_FAILURE otherwise.
- */
 
 etcd_response etcd_delete(const char *key) {
     char *url;
@@ -176,21 +147,6 @@ etcd_response etcd_delete(const char *key) {
     return response;
 }
 
-/*
- * Distributed Test-and-set atomically.
- *
- * @param key:   A non-empty string that should serve as a key.
- * @param value: A non-empty string that should serve as a new 
- *               replacement value if the old value matches.
- * @param oldValue:
- *               A non-empty string serving as old value that is
- *               compared against. If the old value matches with
- *               the value present under the above key, it's re-
- *               placed with the new value.
- * @param ttl:   Expiry time for the key, similar to a set.
- * @return:      ETCD_SUCCESS if new value is successfully, or
- *               ETCD_FAILURE otherwise.
- */
 
 etcd_response etcd_test_and_set(const char *key, const char *value, const char *oldValue, unsigned ttl) {
     char *url, *data, *tmpdata;
