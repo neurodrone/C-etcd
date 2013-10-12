@@ -287,7 +287,7 @@ static const struct etcd_data *http_request(const char *url, etcd_method method,
     }
 
     curl_code = curl_easy_perform(curl);
-    if (curl_code != 0) {
+    if (curl_code != CURLE_OK) {
         if (curl_code == CURLE_COULDNT_CONNECT) {
             debug("Failed to recieve a response for request: %s. Aborting.", url);
             exit(curl_code);
