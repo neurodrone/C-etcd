@@ -14,6 +14,8 @@
 #define HTTP_BAD_REQ 400
 #define ETCD_URL_FORMAT "http://%s:%hd/v1/%s%s"
 
+#define DELETE_KEY "DELETE"
+
 static const char *hostname = NULL;
 static short port = 0;
 

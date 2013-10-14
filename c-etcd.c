@@ -283,7 +283,7 @@ static const struct etcd_data *http_request(const char *url, etcd_method method,
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data);
 
     } else if (method == ETCD_DEL) {
-        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, DELETE_KEY);
     }
 
     curl_code = curl_easy_perform(curl);
@@ -343,7 +343,7 @@ static size_t http_write_callback(void *ptr, size_t size, size_t nmemb, void *us
         if (json_is_string(value)) {
             etcd_value = json_string_value(value);
         }
-        if (strcmp(etcd_value, "DELETE") == 0) {
+        if (strcmp(etcd_value, DELETE_KEY) == 0) {
             value = json_object_get(response, "key");
             etcd_value = json_string_value(value);
             strcpy(data->value, ++etcd_value);
